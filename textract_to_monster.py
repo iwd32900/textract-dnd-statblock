@@ -170,7 +170,7 @@ def parse_paragraph(blocks):
         name, content = "", trait
     return {'Name': name.strip(), 'Content': content.strip(), 'Usage': ''}
 
-def main(infile):
+def load_lines(infile):
     textract = json.load(infile)
     blocks = []
     for block in textract['Blocks']:
@@ -179,7 +179,9 @@ def main(infile):
         blocks.append(locstr(block))
     # print(json.dumps(blocks, indent=4))
     # import pdb; pdb.set_trace()
+    return blocks
 
+def split_cols(blocks):
     # If it appears there are 2 columns of text,
     # put all lines from the second column after the first!
     first_col = []
@@ -192,7 +194,9 @@ def main(infile):
     # L-shaped stat block is possible:  Kobold Inventor, in Volo's
     if len(second_col) >= 0.3*len(first_col):
         blocks = first_col + second_col
+    return blocks
 
+def set_med_gap(blocks):
     # This code determined that baseline can be measured most accurately:
     # import numpy as np
     # for line_gap in (topline_gap, baseline_gap, midline_gap):
@@ -209,7 +213,8 @@ def main(infile):
     # Median is good for long entries, but short entries have more variability!
     MED_GAP = gaps[int(0.25 * len(gaps))]
 
-    print(json.dumps(blocks, indent=4))
+def parse_monster(blocks):
+    blocks = list(blocks) # so we can mutate it!
 
     monster = empty_monster()
     monster['Name'] = blocks.pop(0).title()
@@ -280,6 +285,14 @@ def main(infile):
             else:
                 break
 
+    return monster
+
+def main(infile):
+    blocks = load_lines(infile)
+    blocks = split_cols(blocks)
+    print(json.dumps(blocks, indent=4))
+    set_med_gap(blocks)
+    monster = parse_monster(blocks)
     print(json.dumps(monster, indent=4))
 
 if __name__ == '__main__':
