@@ -169,7 +169,12 @@ def parse_paragraph(blocks):
             break
     trait = " ".join(trait)
     if '.' in trait:
-        name, content = trait.split('.', 1)
+        name, content_ = trait.split('.', 1)
+        # Detect and remove "- " between two lowercase letters (a hyphenated line break)
+        content = re.sub(r'(?<=[a-z])- (?=[a-z])', r'', content_)
+        # if content != content_:
+        #     print(content_)
+        #     print(content)
     else:
         name, content = "", trait
     return {'Name': name.strip(), 'Content': content.strip(), 'Usage': ''}
