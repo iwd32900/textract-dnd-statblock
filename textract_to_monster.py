@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import re
 import sys
@@ -23,8 +24,8 @@ def baseline_gap(b0, b1):
     return (b1.top+b1.height) - (b0.top+b0.height)
 def topline_gap(b0, b1):
     return b1.top - b0.top
-# On balance, baseline is detected most reliably:
-line_gap = baseline_gap
+# On balance, midline is detected most reliably:
+line_gap = midline_gap
 
 def empty_monster():
     return {
@@ -158,7 +159,7 @@ def parse_paragraph(blocks):
         # But dedent can be confusing in other contexts, e.g. numbered lists
         dedent = b0.left - b1.left
         is_trait = rx_trait_name.search(b1)
-        print(f'{vert_gap/MED_GAP:.4f}    {dedent:.4f}    {b0}')
+        # print(f'{vert_gap/MED_GAP:.4f}    {dedent:.4f}    {b0}')
         if vert_gap > 1.3*MED_GAP or (dedent > 0.008 and is_trait):
             break
         if vert_gap < -0.3 and is_trait:
@@ -172,6 +173,12 @@ def parse_paragraph(blocks):
     else:
         name, content = "", trait
     return {'Name': name.strip(), 'Content': content.strip(), 'Usage': ''}
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-v', '--verbose', action='count')
+    parser.add_argument('image_files', nargs='+', type=argparse.FileType('rb'))
+    return parser.parse_args()
 
 def load_lines(infile):
     textract = json.load(infile)
@@ -200,21 +207,25 @@ def split_cols(blocks):
     return blocks
 
 def set_med_gap(blocks):
-    # This code determined that baseline can be measured most accurately:
-    # import numpy as np
-    # for line_gap in (topline_gap, baseline_gap, midline_gap):
-    #     diffs = np.array([line_gap(blocks[i], blocks[i+1]) for i in range(len(blocks)-1)])
-    #     med_diff = np.median(diffs)
-    #     mad_diff = np.median(np.abs(diffs - med_diff))
-    #     print(f"Median: {med_diff}   MAD: {mad_diff}")
-    # return 0
-
     # Infer the typical spacing between lines of text, so we can identify vertical gaps:
     gaps = [line_gap(blocks[ii], blocks[ii+1]) for ii in range(len(blocks)-1)]
     gaps = gaps[17:] # discard name, stats
+    gaps.sort()
     global MED_GAP
     # Median is good for long entries, but short entries have more variability!
     MED_GAP = gaps[int(0.25 * len(gaps))]
+
+    # This code determined that midline can be measured most accurately:
+    # import numpy as np
+    # for gapfunc in (topline_gap, baseline_gap, midline_gap):
+    #     diffs = [gapfunc(blocks[i], blocks[i+1]) for i in range(len(blocks)-1)]
+    #     diffs = diffs[17:] # discard name, stats
+    #     diffs.sort()
+    #     diffs = diffs[:len(diffs)//2] # focus on the more compact half of lines
+    #     med_diff = np.median(diffs)
+    #     mad_diff = np.median(np.abs(diffs - med_diff))
+    #     print(f"Median: {med_diff:.6f} == {MED_GAP:.6f}    MAD: {mad_diff:.4f}")
+    # sys.exit(0)
 
 def parse_monster(blocks):
     blocks = list(blocks) # so we can mutate it!
@@ -225,79 +236,88 @@ def parse_monster(blocks):
 
     mode = 'PRE_STATS'
     while blocks:
-        block = blocks[0]
-        if mode == 'PRE_STATS':
-            if block.startswith("Armor Class"):
-                monster['AC'] = parse_armor_class(blocks.pop(0))
-            elif block.startswith("Hit Points"):
-                monster['HP'] = parse_hit_points(blocks.pop(0))
-            elif block.startswith("Speed"):
-                monster['Speed'] = parse_comma_list(blocks)
-            elif block == 'STR' and len(blocks) >= 12:
-                assert blocks[0:6] == "STR DEX CON INT WIS CHA".split()
-                monster['Abilities']['Str'] = parse_ability_score(blocks[6])
-                monster['Abilities']['Dex'] = parse_ability_score(blocks[7])
-                monster['Abilities']['Con'] = parse_ability_score(blocks[8])
-                monster['Abilities']['Int'] = parse_ability_score(blocks[9])
-                monster['Abilities']['Wis'] = parse_ability_score(blocks[10])
-                monster['Abilities']['Cha'] = parse_ability_score(blocks[11])
-                blocks = blocks[12:]
-                mode = 'POST_STATS'
-            else:
-                blocks.pop(0)
-        elif mode == 'POST_STATS':
-            if block.startswith('Saving Throws'):
-                monster['Saves'] = parse_saving_throws(blocks, 2)
-            if block.startswith('Skills'):
-                monster['Skills'] = parse_saving_throws(blocks)
-            elif block.startswith('Damage Vulnerabilities'):
-                monster['DamageVulnerabilities'] = parse_comma_list(blocks, 2)
-            elif block.startswith('DamageResistances'):
-                monster['DamageResistances'] = parse_comma_list(blocks)
-            elif block.startswith('Damage Immunities'):
-                monster['DamageImmunities'] = parse_comma_list(blocks, 2)
-            elif block.startswith('Condition Immunities'):
-                monster['ConditionImmunities'] = parse_comma_list(blocks, 2)
-            elif block.startswith('Senses'):
-                monster['Senses'] = parse_comma_list(blocks)
-            elif block.startswith('Languages'):
-                monster['Languages'] = parse_comma_list(blocks)
-            elif block.startswith('Challenge'):
-                monster['Challenge'] = parse_challenge(blocks.pop(0))
-                mode = 'TRAITS'
-            else:
-                blocks.pop(0)
-        else: # TRAITS, ACTIONS, REACTIONS, LEGENDARY_ACTIONS
-            if block == 'ACTIONS':
-                mode = 'ACTIONS'
-                blocks.pop(0)
-            elif block == 'REACTIONS':
-                mode = 'REACTIONS'
-                blocks.pop(0)
-            elif block == 'LEGENDARY ACTIONS':
-                mode = 'LEGENDARY_ACTIONS'
-                blocks.pop(0)
-            elif mode == 'TRAITS':
-                monster['Traits'].append(parse_paragraph(blocks))
-            elif mode == 'ACTIONS':
-                monster['Actions'].append(parse_paragraph(blocks))
-            elif mode == 'REACTIONS':
-                monster['Reactions'].append(parse_paragraph(blocks))
-            elif mode == 'LEGENDARY_ACTIONS':
-                monster['LegendaryActions'].append(parse_paragraph(blocks))
-            else:
-                break
+        try:
+            block = blocks[0]
+            if mode == 'PRE_STATS':
+                if block.startswith("Armor Class"):
+                    monster['AC'] = parse_armor_class(blocks.pop(0))
+                elif block.startswith("Hit Points"):
+                    monster['HP'] = parse_hit_points(blocks.pop(0))
+                elif block.startswith("Speed"):
+                    monster['Speed'] = parse_comma_list(blocks)
+                elif block == 'STR' and len(blocks) >= 12:
+                    assert blocks[0:6] == "STR DEX CON INT WIS CHA".split()
+                    monster['Abilities']['Str'] = parse_ability_score(blocks[6])
+                    monster['Abilities']['Dex'] = parse_ability_score(blocks[7])
+                    monster['Abilities']['Con'] = parse_ability_score(blocks[8])
+                    monster['Abilities']['Int'] = parse_ability_score(blocks[9])
+                    monster['Abilities']['Wis'] = parse_ability_score(blocks[10])
+                    monster['Abilities']['Cha'] = parse_ability_score(blocks[11])
+                    blocks = blocks[12:]
+                    mode = 'POST_STATS'
+                else:
+                    blocks.pop(0)
+            elif mode == 'POST_STATS':
+                if block.startswith('Saving Throws'):
+                    monster['Saves'] = parse_saving_throws(blocks, 2)
+                if block.startswith('Skills'):
+                    monster['Skills'] = parse_saving_throws(blocks)
+                elif block.startswith('Damage Vulnerabilities'):
+                    monster['DamageVulnerabilities'] = parse_comma_list(blocks, 2)
+                elif block.startswith('DamageResistances'):
+                    monster['DamageResistances'] = parse_comma_list(blocks)
+                elif block.startswith('Damage Immunities'):
+                    monster['DamageImmunities'] = parse_comma_list(blocks, 2)
+                elif block.startswith('Condition Immunities'):
+                    monster['ConditionImmunities'] = parse_comma_list(blocks, 2)
+                elif block.startswith('Senses'):
+                    monster['Senses'] = parse_comma_list(blocks)
+                elif block.startswith('Languages'):
+                    monster['Languages'] = parse_comma_list(blocks)
+                elif block.startswith('Challenge'):
+                    monster['Challenge'] = parse_challenge(blocks.pop(0))
+                    mode = 'TRAITS'
+                else:
+                    blocks.pop(0)
+            else: # TRAITS, ACTIONS, REACTIONS, LEGENDARY_ACTIONS
+                if block == 'ACTIONS':
+                    mode = 'ACTIONS'
+                    blocks.pop(0)
+                elif block == 'REACTIONS':
+                    mode = 'REACTIONS'
+                    blocks.pop(0)
+                elif block == 'LEGENDARY ACTIONS':
+                    mode = 'LEGENDARY_ACTIONS'
+                    blocks.pop(0)
+                elif mode == 'TRAITS':
+                    monster['Traits'].append(parse_paragraph(blocks))
+                elif mode == 'ACTIONS':
+                    monster['Actions'].append(parse_paragraph(blocks))
+                elif mode == 'REACTIONS':
+                    monster['Reactions'].append(parse_paragraph(blocks))
+                elif mode == 'LEGENDARY_ACTIONS':
+                    monster['LegendaryActions'].append(parse_paragraph(blocks))
+                else:
+                    break
+        except:
+            import traceback
+            traceback.print_exc()
 
     return monster
 
-def main(infile):
-    blocks = load_lines(infile)
-    blocks = split_cols(blocks)
-    print(json.dumps(blocks, indent=4))
-    set_med_gap(blocks)
-    monster = parse_monster(blocks)
-    print(json.dumps(monster, indent=4))
+def main(args):
+    for infile in args.image_files:
+        blocks = load_lines(infile)
+        blocks = split_cols(blocks)
+        if args.verbose:
+            print(json.dumps(blocks, indent=4))
+        set_med_gap(blocks)
+        monster = parse_monster(blocks)
+        if args.verbose:
+            print(json.dumps(monster, indent=4))
+        outname = re.sub(r'[^A-Za-z]', r'', monster['Name']) + '.monster.json'
+        with open(outname, 'w') as outfile:
+            json.dump(monster, outfile, indent=4)
 
 if __name__ == '__main__':
-    sys.exit(main(open(sys.argv[1])))
-    # sys.exit(main(sys.stdin))
+    sys.exit(main(parse_args()))
