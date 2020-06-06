@@ -123,7 +123,7 @@ def parse_saving_throws(blocks, nwords=1):
             pass
     return out
 
-rx_spell_line = re.compile(r'^(Cantrips?|([1I]st|2nd|3rd|[4-9]th) level) \(')
+rx_spell_line = re.compile(r'^(Cantrips?|([1I]st|2nd|3rd|[4-9]th) level) \(|^[1-9][0-9]?\. [A-Z][a-z]')
 def is_spell_line(block):
     m = rx_spell_line.search(block)
     return bool(m)
@@ -149,16 +149,19 @@ def parse_paragraph(blocks):
         b1 = blocks[0]
         if is_spell_line(b1):
             # Sometimes spells are separated by vertical whitespace (e.g. Mummy Lord).
-            # They should get hard line breaks, but not be new paragraphs
+            # They should get hard line breaks, but not be new paragraphs.
+            # Also some monster actions contain numbered lists (e.g. Spectator, Kobold Inventor).
             trait.append('\n')
             continue
         vert_gap = line_gap(b0, b1)
         # Dedent can be used to separate Legendary Actions (e.g. Mummy Lord)
+        # But dedent can be confusing in other contexts, e.g. numbered lists
         dedent = b0.left - b1.left
+        is_trait = rx_trait_name.search(b1)
         print(f'{vert_gap/MED_GAP:.4f}    {dedent:.4f}    {b0}')
-        if vert_gap > 1.3*MED_GAP or dedent > 0.008:
+        if vert_gap > 1.3*MED_GAP or (dedent > 0.008 and is_trait):
             break
-        if vert_gap < -0.3 and rx_trait_name.search(b1):
+        if vert_gap < -0.3 and is_trait:
             # Tricky case -- after column wrap, is it a continuation or a new trait?
             # Try to decide based on whether the text looks like a new trait/action/etc.
             # L-shaped stat block is possible:  Kobold Inventor, in Volo's
